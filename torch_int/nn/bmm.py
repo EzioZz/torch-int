@@ -1,5 +1,5 @@
 import torch
-from .._CUDA import bmm_s8t_s8n_s8t, bmm_s8t_s8n_s32t, bmm_s8t_s8n_f32t
+from .._CUDA import bmm_s8t_s8n_s8t, bmm_s8t_s8n_s32t, bmm_s8t_s8n_f32t, bmm_s8t_s8n_s32t_cublas
 
 
 class BMM_S8T_S8N_S8T(torch.nn.Module):
@@ -56,3 +56,14 @@ class BMM_S8T_S8N_S32T(torch.nn.Module):
         # b: [B, N, K] int8
         # return: [B, M, N] int32
         return bmm_s8t_s8n_s32t(a, b)
+
+class BMM_S8T_S8N_S32T_CUBLAS(torch.nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+    
+    @torch.no_grad()
+    def forward(self, a, b):
+        # a: [B, M, K] int8
+        # b: [B, N, K] int8
+        # return: [B, M, N] int32
+        return bmm_s8t_s8n_s32t_cublas(a, b)

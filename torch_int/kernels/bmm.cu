@@ -6,6 +6,10 @@
 #include <cutlass/gemm/device/gemm_batched.h>
 #include <cutlass/numeric_types.h>
 #include <cutlass/util/host_tensor.h>
+#include <cublas_v2.h>
+#include <ATen/ATen.h>
+#include <ATen/cuda/CUDABlas.h>
+#include <ATen/cuda/Exceptions.h>
 
 torch::Tensor bmm_s8t_s8n_f32t(torch::Tensor A, torch::Tensor B, float alpha) {
   int batch_size = A.size(0);
@@ -208,4 +212,78 @@ torch::Tensor bmm_s8t_s8n_s32t(torch::Tensor A, torch::Tensor B) {
     std::cout << "cutlass error code: " << (int)status << std::endl;
   }
   return C;
+}
+
+torch::Tensor bmm_s8t_s8n_s32t_cublas(torch::Tensor A, torch::Tensor B) {
+  int batch_size = A.size(0);
+  int M = A.size(1);
+  int N = B.size(1); // b, N, K
+  int K = A.size(2); 
+  auto C = torch::empty({batch_size, M, N},
+                        torch::dtype(torch::kInt32).device(A.device()));
+
+  int lda = A.size(2); // K
+  int ldb = B.size(2); // N
+  int ldc = C.size(2); // N
+
+  // using LayoutInputA = cutlass::layout::RowMajor;
+  // using LayoutInputB = cutlass::layout::ColumnMajor;
+  // using LayoutOutput = cutlass::layout::RowMajor;
+
+  // using ElementOutput = int32_t;
+  // using ElementInputA = int8_t;
+  // using ElementInputB = int8_t;
+
+  long long int batch_stride_A = M * K;
+  long long int batch_stride_B = N * K;
+  long long int batch_stride_C = M * N;
+
+  cublasStatus_t status;
+
+  cublasHandle_t handle = at::cuda::getCurrentCUDABlasHandle();
+
+
+  int32_t alpha = 1; 
+  int32_t beta = 0; 
+
+  status = cublasGemmStridedBatchedEx(handle, CUBLAS_OP_T, CUBLAS_OP_N,
+                                    N, M, K,
+                                      (const void*)&alpha, 
+                                      (const void*)B.data_ptr(), CUDA_R_8I, K, batch_stride_B,
+                                      (const void*)A.data_ptr(), CUDA_R_8I, K, batch_stride_A,
+                                      (const void*)&beta,
+                                      (void*)C.data_ptr(), CUDA_R_32I, N, batch_stride_C,
+                                      batch_size,
+                                      CUDA_R_32I, 
+                                      CUBLAS_GEMM_DEFAULT_TENSOR_OP);
+  if (status != CUBLAS_STATUS_SUCCESS) {
+      printf("cuBLAS API failed with status %d\n", status);
+  }
+
+
+  return C;
+  // cublasStatus_t cublasGemmStridedBatchedEx(cublasHandle_t handle,
+  //                             cublasOperation_t transa,
+  //                             cublasOperation_t transb,
+  //                             int m,
+  //                             int n,
+  //                             int k,
+  //                             const void    *alpha,
+  //                             const void     *A,
+  //                             cudaDataType Atype,
+  //                             int lda,
+  //                             long long int strideA,
+  //                             const void     *B,
+  //                             cudaDataType Btype,
+  //                             int ldb,
+  //                             long long int strideB,
+  //                             const void    *beta,
+  //                             void           *C,
+  //                             cudaDataType Ctype,
+  //                             int ldc,
+  //                             long long int strideC,
+  //                             int batchCount,
+  //                             cudaDataType computeType,
+  //                             cublasGemmAlgo_t algo)
+
 }

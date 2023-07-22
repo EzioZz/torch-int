@@ -1,5 +1,6 @@
 import torch
 from torch_int._CUDA import bmm_s8t_s8n_s8t, bmm_s8t_s8n_s32t, bmm_s8t_s8n_f32t
+from torch_int._CUDA import bmm_s8t_s8n_s32t_cublas
 from icecream import ic
 
 
@@ -119,6 +120,17 @@ def test_bmm_s8t_s8n_s32t():
     c = bmm_s8t_s8n_s32t(a.cuda(), b.cuda())
     ic(torch.allclose(c_gt, c.cpu()))
 
+@torch.no_grad()
+def test_bmm_s8t_s8n_s32t_cublas():
+    B, M, K, N = 1, 512, 512, 12288
+    # B, M, K, N = 1, 4, 4, 4
+    a = torch.randint(-128, 127, (B, M, K), dtype=torch.int8)
+    b = torch.randint(-128, 127, (B, N, K), dtype=torch.int8)
+    c_gt = torch.bmm(a.float(), b.float().transpose(1, 2)
+                     ).round().to(torch.int32)
+    c = bmm_s8t_s8n_s32t_cublas(a.cuda(), b.cuda())
+    ic(torch.allclose(c_gt, c.cpu()))
+
 
 if __name__ == '__main__':
     print('test_bmm_s8t_s8n_s8t')
@@ -127,5 +139,8 @@ if __name__ == '__main__':
     test_bmm_s8t_s8n_s8t_2()
     print('test_bmm_s8t_s8n_s32t')
     test_bmm_s8t_s8n_s32t()
+    print('bmm_s8t_s8n_s32t_cublas')
+    test_bmm_s8t_s8n_s32t_cublas()
+    
     print('test_bmm_s8t_s8n_f32t')
     test_bmm_s8t_s8n_f32t()
