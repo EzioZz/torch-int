@@ -35,6 +35,12 @@ def bench_bmm(precision, batch_size, seq_len, hidden_dim, fn=bmm_s8t_s8n_s32t_cu
     print(f"gops = {gops}")
 
 
+def test_case(batchSize, seq_len, hidden_dim, precision, fn):
+
+    print(f'B={batchSize}, L={seq_len}, H={hidden_dim}, precision={precision}, func={fn.__name__}')
+    bench_bmm(args.precision, args.batch_size, args.seq_len, args.hidden_dim, fn)
+    print("------------------------------------------------------------------------------")
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -43,7 +49,16 @@ if __name__ == '__main__':
     parser.add_argument('--hidden-dim', type=int, default=12288)
     parser.add_argument('--precision', type=str, default='int8')
     args = parser.parse_args()
-    print(f'B={args.batch_size}, L={args.seq_len}, H={args.hidden_dim}, precision={args.precision}')
-    bench_bmm(args.precision, args.batch_size, args.seq_len, args.hidden_dim)
-    bench_bmm(args.precision, args.batch_size, args.seq_len, args.hidden_dim, bmm_s8t_s8n_s32t)
+    # print(f'B={args.batch_size}, L={args.seq_len}, H={args.hidden_dim}, precision={args.precision}')
+    # bench_bmm(args.precision, args.batch_size, args.seq_len, args.hidden_dim)
+    # bench_bmm(args.precision, args.batch_size, args.seq_len, args.hidden_dim, bmm_s8t_s8n_s32t)
+    
+    test_case(1, 512, 12288, 'int8', bmm_s8t_s8n_s32t)
+    test_case(1, 512, 12288, 'int8', bmm_s8t_s8n_s32t_cublas)
+    test_case(8, 512, 12288, 'int8', bmm_s8t_s8n_s32t)
+    test_case(8, 512, 12288, 'int8', bmm_s8t_s8n_s32t_cublas)
+    test_case(16, 512, 12288, 'int8', bmm_s8t_s8n_s32t)
+    test_case(16, 512, 12288, 'int8', bmm_s8t_s8n_s32t_cublas)
+    
+    
 # 
