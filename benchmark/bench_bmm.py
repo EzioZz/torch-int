@@ -38,7 +38,7 @@ def bench_bmm(precision, batch_size, seq_len, hidden_dim, fn=bmm_s8t_s8n_s32t_cu
 def test_case(batchSize, seq_len, hidden_dim, precision, fn):
 
     print(f'B={batchSize}, L={seq_len}, H={hidden_dim}, precision={precision}, func={fn.__name__}')
-    bench_bmm(args.precision, args.batch_size, args.seq_len, args.hidden_dim, fn)
+    bench_bmm(precision, batchSize, seq_len, hidden_dim, fn)
     print("------------------------------------------------------------------------------")
 
 
@@ -53,12 +53,25 @@ if __name__ == '__main__':
     # bench_bmm(args.precision, args.batch_size, args.seq_len, args.hidden_dim)
     # bench_bmm(args.precision, args.batch_size, args.seq_len, args.hidden_dim, bmm_s8t_s8n_s32t)
     
+    
+    test_case(32, 2048, 64, 'int8', bmm_s8t_s8n_s32t)
+    test_case(32, 2048, 64, 'int8', bmm_s8t_s8n_s32t_cublas)
+    test_case(32, 2048, 1024, 'int8', bmm_s8t_s8n_s32t)
+    test_case(32, 2048, 1024, 'int8', bmm_s8t_s8n_s32t_cublas)
     test_case(1, 512, 12288, 'int8', bmm_s8t_s8n_s32t)
     test_case(1, 512, 12288, 'int8', bmm_s8t_s8n_s32t_cublas)
+    test_case(1, 2048, 64, 'int8', bmm_s8t_s8n_s32t)
+    test_case(1, 2048, 64, 'int8', bmm_s8t_s8n_s32t_cublas)
+    test_case(1, 2048, 1024, 'int8', bmm_s8t_s8n_s32t)
+    test_case(1, 2048, 1024, 'int8', bmm_s8t_s8n_s32t_cublas)
     test_case(8, 512, 12288, 'int8', bmm_s8t_s8n_s32t)
     test_case(8, 512, 12288, 'int8', bmm_s8t_s8n_s32t_cublas)
+    test_case(8, 2048, 64, 'int8', bmm_s8t_s8n_s32t)
+    test_case(8, 2048, 64, 'int8', bmm_s8t_s8n_s32t_cublas)
+    test_case(8, 2048, 1024, 'int8', bmm_s8t_s8n_s32t)
+    test_case(8, 2048, 1024, 'int8', bmm_s8t_s8n_s32t_cublas)
     test_case(16, 512, 12288, 'int8', bmm_s8t_s8n_s32t)
     test_case(16, 512, 12288, 'int8', bmm_s8t_s8n_s32t_cublas)
-    
+
     
 # 
