@@ -112,7 +112,7 @@ torch::Tensor bmm_s8t_s8n_s8t(torch::Tensor A, torch::Tensor B, float alpha) {
   using Gemm = cutlass::gemm::device::GemmBatched<
       ElementInputA, LayoutInputA, ElementInputB, LayoutInputB, ElementOutput,
       LayoutOutput, ElementAccumulator, cutlass::arch::OpClassTensorOp,
-      cutlass::arch::Sm80, cutlass::gemm::GemmShape<256, 128, 64>,
+      cutlass::arch::Sm80, cutlass::gemm::GemmShape<128, 128, 64>,
       cutlass::gemm::GemmShape<64, 64, 64>, cutlass::gemm::GemmShape<16, 8, 32>,
       EpilogueOp>;
 
@@ -195,6 +195,7 @@ torch::Tensor bmm_s8t_s8n_s32t(torch::Tensor A, torch::Tensor B) {
   Gemm gemm_op;
 
   ElementComputeEpilogue alpha = 1;
+  int split_k_slices = 16;
 
   cutlass::Status status = gemm_op({{M, N, K},
                                     {A.data_ptr<ElementInputA>(), lda},
@@ -216,7 +217,7 @@ torch::Tensor bmm_s8t_s8n_s32t(torch::Tensor A, torch::Tensor B) {
 
 torch::Tensor bmm_s8t_s8n_s32t_cublas(torch::Tensor A, torch::Tensor B) {
   int batch_size = A.size(0);
-  int M = A.size(1);
+  int M = A.size(1); // row M K, col k m,At
   int N = B.size(1); // b, N, K
   int K = A.size(2); 
   auto C = torch::empty({batch_size, M, N},
@@ -262,29 +263,6 @@ torch::Tensor bmm_s8t_s8n_s32t_cublas(torch::Tensor A, torch::Tensor B) {
 
 
   return C;
-  // cublasStatus_t cublasGemmStridedBatchedEx(cublasHandle_t handle,
-  //                             cublasOperation_t transa,
-  //                             cublasOperation_t transb,
-  //                             int m,
-  //                             int n,
-  //                             int k,
-  //                             const void    *alpha,
-  //                             const void     *A,
-  //                             cudaDataType Atype,
-  //                             int lda,
-  //                             long long int strideA,
-  //                             const void     *B,
-  //                             cudaDataType Btype,
-  //                             int ldb,
-  //                             long long int strideB,
-  //                             const void    *beta,
-  //                             void           *C,
-  //                             cudaDataType Ctype,
-  //                             int ldc,
-  //                             long long int strideC,
-  //                             int batchCount,
-  //                             cudaDataType computeType,
-  //                             cublasGemmAlgo_t algo)
 
 }
 
