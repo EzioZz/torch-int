@@ -26,7 +26,7 @@ def bench_bmm(precision, batch_size, seq_len, hidden_dim, fn=bmm_s8t_s8n_s32t_cu
         fn = torch.bmm
     elif precision == 'fp32':
         a = torch.randn(batch_size, seq_len, hidden_dim).float().cuda()
-        b = torch.randn(batch_size, seq_len, hidden_dim).half().cuda().transpose(1, 2)
+        b = torch.randn(batch_size, seq_len, hidden_dim).float().cuda().transpose(1, 2)
         args = (a, b)
         
         bmm_s4t_s4n_f32t(a, b, 1.0)

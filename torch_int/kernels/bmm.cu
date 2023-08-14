@@ -12,6 +12,18 @@
 #include <ATen/cuda/CUDABlas.h>
 #include <ATen/cuda/Exceptions.h>
 
+#define cudaCheckErrors(msg)                                   \
+    do {                                                       \
+        cudaError_t __err = cudaGetLastError();                \
+        if (__err != cudaSuccess) {                            \
+            fprintf(stderr, "Fatal error: %s (%s at %s:%d)\n", \
+                    msg, cudaGetErrorString(__err),            \
+                    __FILE__, __LINE__);                       \
+            fprintf(stderr, "*** FAILED - ABORTING\n");        \
+            exit(1);                                           \
+        }                                                      \
+    } while (0)
+
 torch::Tensor bmm_s8t_s8n_f32t(torch::Tensor A, torch::Tensor B, float alpha) {
   int batch_size = A.size(0);
   int M = A.size(1);
@@ -243,19 +255,16 @@ __global__ void quant_f32_s4(float* a, uint8_t* dst, const size_t sizeA, float s
     res2 = ((reg_b.z & 0x8000) >> 24)|((reg_b.z & 0x0006)<<4) | ((reg_b.w & 0x8000) >> 28)|((reg_b.w & 0x0006)<<4) ;
     
     // convert 4 float to 4 int4, then store into 2 uint8
-    dst[idx>>1 ] = res1;
-    dst[idx>>1 + 1] = res2;
+    idx = idx/2;
+    dst[idx  ] = res1;
+    dst[idx+1] = res2;
 
     return;
 }
 
 
-// void invokeQuantize(torch::Tensor A, float scale, float offset){
+// void invokeQuantize(float* A, uint8_t* dst, float scale, float offset){
 //     // input = torch.clamp(torch.round(input / qinput_interval - offset) + offset, min_v, max_v)
-//   int batch_size = A.size(0);
-//   int M = A.size(1);
-//   int K = A.size(2);
-//   size_t sizeA = batch_size * M * K;
   
 //   uint8_t* qInt4_A;
 //   cudaMalloc((uint8_t**)&qInt4_A, sizeA*sizeof(uint8_t) / 2);
@@ -285,10 +294,13 @@ void benchTestQuantize(torch::Tensor A){
   cudaEvent_t start, end;
   cudaEventCreate(&start);
   cudaEventCreate(&end);
-
+  
   for (int i = 0; i < 100; i++) {
     quant_f32_s4<<<gridSize, blockSize>>>(A.data_ptr<float>(), qInt4_A, sizeA, scale, offset);
   }
+  cudaDeviceSynchronize();
+  cudaCheckErrors("yych: ");
+
 
   constexpr int n_iter = 1000;
   cudaEventRecord(start);
@@ -305,38 +317,142 @@ void benchTestQuantize(torch::Tensor A){
 
   long long workload = (long long)n_iter * (sizeA * 4 + sizeA/2 * 1); // byte
   double bandwidth = ((double)workload ) / ((double)ms/1e3) / (1e9);
-  printf("Performance: %lfGBS\n", bandwidth);
+  printf("int4 quantize Performance: %lfGBS\n", bandwidth);
+
+}
+
+void bmm_s4t_s4n_f32t_test(uint8_t* qInt4_A, uint8_t* qInt4_B, float* C, int batch_size, int M, int N, int K, int lda, int ldb, int ldc){
+  using LayoutInputA = cutlass::layout::RowMajor;
+  using LayoutInputB = cutlass::layout::ColumnMajor;
+  using LayoutOutput = cutlass::layout::RowMajor;
+
+  using ElementOutput = float;
+  using ElementInputA = cutlass::int4b_t;
+  using ElementInputB = cutlass::int4b_t;
+
+  using ElementAccumulator = int32_t;
+  using ElementComputeEpilogue = float;
+
+  using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
+      ElementOutput, 128 / cutlass::sizeof_bits<ElementOutput>::value,
+      ElementAccumulator, ElementComputeEpilogue>;
+
+  using Gemm = cutlass::gemm::device::GemmBatched<
+      ElementInputA, LayoutInputA, ElementInputB, LayoutInputB, ElementOutput,
+      LayoutOutput, ElementAccumulator, cutlass::arch::OpClassTensorOp,
+      cutlass::arch::Sm80, cutlass::gemm::GemmShape<256, 128, 64>,
+      cutlass::gemm::GemmShape<64, 64, 64>, cutlass::gemm::GemmShape<8, 8, 32>,
+      EpilogueOp>;
+
+  long long int batch_stride_A = M * K;
+  long long int batch_stride_B = N * K;
+  long long int batch_stride_C = M * N;
+  float alpha = 1.0;
+  Gemm gemm_op;
+  typename Gemm::Arguments arguments{
+      {M, N, K},      {(const cutlass::int4b_t*)qInt4_A, lda},
+      batch_stride_A, {(const cutlass::int4b_t*)qInt4_B, ldb},
+      batch_stride_B, {C, ldc},
+      batch_stride_C, {C, ldc},
+      batch_stride_C, {alpha, 0},
+      batch_size};
+
+  size_t workspace_size = Gemm::get_workspace_size(arguments);
+
+  // Allocate workspace memory
+  cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
+
+  // Check the problem size is supported or not
+  cutlass::Status status = gemm_op.can_implement(arguments);
+  if (status != cutlass::Status::kSuccess) {
+    throw std::runtime_error("cutlass cannot implement");
+  }
+
+  // Initialize CUTLASS kernel with arguments and workspace pointer
+  status = gemm_op.initialize(arguments, workspace.get());
+  if (status != cutlass::Status::kSuccess) {
+    throw std::runtime_error("cutlass cannot initialize");
+  }
+
+  status = gemm_op();
+  if (status != cutlass::Status::kSuccess) {
+    std::cout << "cutlass cannot run" << std::endl;
+    throw std::runtime_error("cutlass cannot run");
+  }
+}
+
+
+void benchTestBmmInt4(torch::Tensor A, torch::Tensor B, float alpha){
+  printf("start bench bmm int4 \n");
+  int scale = 1.0;
+  int offset = 0.0;
+
+  int batch_size = A.size(0);
+  int M = A.size(1);
+  int K = A.size(2);
+  int N = B.size(2); // B K N
+
+  size_t sizeA = batch_size * M * K;
+  size_t sizeB = batch_size * N * K;
+  size_t sizeC = batch_size * M * N;
+
+  int lda = A.size(2);
+  int ldb = B.size(2);
+  int ldc = lda;
+
+  uint8_t* qInt4_A;
+  uint8_t* qInt4_B;
+  float* C;
+  cudaMalloc((uint8_t**)&qInt4_A, sizeA*sizeof(uint8_t) / 2);
+  cudaMalloc((uint8_t**)&qInt4_B, sizeB*sizeof(uint8_t) / 2);
+  cudaMalloc((float **)&C, sizeC*sizeof(float));
+
+  // do quant int4
+  // quant_f32_s4(float* a, uint8_t* dst, const size_t sizeA, float scale, float offset);
+  quant_f32_s4<<<sizeA/256/4, 256>>>((float*)A.data_ptr(), qInt4_A, sizeA, scale, offset);
+  quant_f32_s4<<<sizeB/256/4, 256>>>((float*)B.data_ptr(), qInt4_B, sizeB, scale, offset);
+  cudaDeviceSynchronize();
+  cudaCheckErrors("yych: ");
+  
+  cudaEvent_t start, end;
+  cudaEventCreate(&start);
+  cudaEventCreate(&end);
+  cutlass::int4b_t;
+
+  bmm_s4t_s4n_f32t_test(qInt4_A, qInt4_B, C, batch_size, M, N, K, lda, ldb, ldc);
+  cudaDeviceSynchronize();
+  cudaCheckErrors("yych: ");
+
+
+  constexpr int n_iter = 1000;
+  cudaEventRecord(start);
+  for (int i = 0; i < n_iter; i++) {
+    bmm_s4t_s4n_f32t_test(qInt4_A, qInt4_B, C, batch_size, M, N, K, lda, ldb, ldc);
+  }
+  cudaDeviceSynchronize();
+  cudaEventRecord(end);  
+
+  cudaCheckErrors("yych: ");
+
+  float ms;
+  cudaEventElapsedTime(&ms, start, end);
+  cudaEventDestroy(start);
+  cudaEventDestroy(end);
+
+  long long computeLoad = (long long)n_iter * (batch_size * M * K * N);
+  double gops = (double)computeLoad / ((double)ms / 1e3) / (1e9); // G
+  double tops = gops / 1e3;
+  // long long workload = (long long)n_iter * (sizeA * 4 + sizeA/2 * 1); // byte
+  // double bandwidth = ((double)workload ) / ((double)ms/1e3) / (1e9);
+  printf("bmm Performance: %lfGops\n", gops);
 
 }
 
 
-// void benchTestBmmInt4(torch::Tensor A, torch::Tensor B, float alpha){
-//   float scale = 100.0;
-//   float offset = 20.0;
-
-//   int batch_size = A.size(0);
-//   int M = A.size(1);
-//   int K = A.size(2);
-
-//   constexpr size_t sizeA = batch_size * M * K;
-//   uint8_t* qInt4_A;
-//   cudaMalloc((uint8_t**)&qInt4_A, sizeA*sizeof(uint8_t) / 2);
-
-//   constexpr int blockSize = 256;
-//   constexpr int gridSize = sizeA / blockSize / 4; // 每个线程负责 4 个 float
-
-//   cudaEvent_t start, end;
-//   cudaEventCreate(&start);
-//   cudaEventCreate(&end);
-
-//   for (int i = 0; i < 100; i++){
-//       float4_add<<<gridSize, blockSize>>>(d_a, d_b, d_c);
-//   }
-
-// }
-
 torch::Tensor bmm_s4t_s4n_f32t(torch::Tensor A, torch::Tensor B, float alpha) {
   benchTestQuantize(A);
+  benchTestBmmInt4(A, B, alpha);
+  return A;
   // benchTestBmmInt4(A, B, alpha);
 
   // 注意，这里输入矩阵 A，矩阵 B 都还是 float 类型的
