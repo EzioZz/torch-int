@@ -1,6 +1,7 @@
 import torch
 from torch_int._CUDA import bmm_s8t_s8n_s8t, bmm_s8t_s8n_s32t, bmm_s8t_s8n_f32t
 from torch_int._CUDA import bmm_s8t_s8n_s32t_cublas
+from torch_int._CUDA import bmm_s4t_s4n_f32t
 from utils import bench_func_latency
 import argparse
 import faulthandler
@@ -20,10 +21,17 @@ def bench_bmm(precision, batch_size, seq_len, hidden_dim, fn=bmm_s8t_s8n_s32t_cu
         # fn = bmm_s8t_s8n_s32t
     elif precision == 'fp16':
         a = torch.randn(batch_size, seq_len, hidden_dim).half().cuda()
-        b = torch.randn(batch_size, seq_len,
-                        hidden_dim).half().cuda().transpose(1, 2)
+        b = torch.randn(batch_size, seq_len, hidden_dim).half().cuda().transpose(1, 2)
         args = (a, b)
         fn = torch.bmm
+    elif precision == 'fp32':
+        a = torch.randn(batch_size, seq_len, hidden_dim).float().cuda()
+        b = torch.randn(batch_size, seq_len, hidden_dim).half().cuda().transpose(1, 2)
+        args = (a, b)
+        
+        bmm_s4t_s4n_f32t(a, b, 1.0)
+        
+        return 
     else:
         raise NotImplementedError
     
@@ -53,25 +61,25 @@ if __name__ == '__main__':
     # bench_bmm(args.precision, args.batch_size, args.seq_len, args.hidden_dim)
     # bench_bmm(args.precision, args.batch_size, args.seq_len, args.hidden_dim, bmm_s8t_s8n_s32t)
     
+    test_case(32, 256, 64, 'fp32', bmm_s4t_s4n_f32t)
     
-    test_case(32, 2048, 64, 'int8', bmm_s8t_s8n_s32t)
-    test_case(32, 2048, 64, 'int8', bmm_s8t_s8n_s32t_cublas)
-    test_case(32, 2048, 1024, 'int8', bmm_s8t_s8n_s32t)
-    test_case(32, 2048, 1024, 'int8', bmm_s8t_s8n_s32t_cublas)
-    test_case(1, 512, 12288, 'int8', bmm_s8t_s8n_s32t)
-    test_case(1, 512, 12288, 'int8', bmm_s8t_s8n_s32t_cublas)
-    test_case(1, 2048, 64, 'int8', bmm_s8t_s8n_s32t)
-    test_case(1, 2048, 64, 'int8', bmm_s8t_s8n_s32t_cublas)
-    test_case(1, 2048, 1024, 'int8', bmm_s8t_s8n_s32t)
-    test_case(1, 2048, 1024, 'int8', bmm_s8t_s8n_s32t_cublas)
-    test_case(8, 512, 12288, 'int8', bmm_s8t_s8n_s32t)
-    test_case(8, 512, 12288, 'int8', bmm_s8t_s8n_s32t_cublas)
-    test_case(8, 2048, 64, 'int8', bmm_s8t_s8n_s32t)
-    test_case(8, 2048, 64, 'int8', bmm_s8t_s8n_s32t_cublas)
-    test_case(8, 2048, 1024, 'int8', bmm_s8t_s8n_s32t)
-    test_case(8, 2048, 1024, 'int8', bmm_s8t_s8n_s32t_cublas)
-    test_case(16, 512, 12288, 'int8', bmm_s8t_s8n_s32t)
-    test_case(16, 512, 12288, 'int8', bmm_s8t_s8n_s32t_cublas)
-
+    # test_case(32, 2048, 64, 'int8', bmm_s8t_s8n_s32t)
+    # test_case(32, 2048, 64, 'int8', bmm_s8t_s8n_s32t_cublas)
+    # test_case(32, 2048, 1024, 'int8', bmm_s8t_s8n_s32t)
+    # test_case(32, 2048, 1024, 'int8', bmm_s8t_s8n_s32t_cublas)
+    # test_case(1, 512, 12288, 'int8', bmm_s8t_s8n_s32t)
+    # test_case(1, 512, 12288, 'int8', bmm_s8t_s8n_s32t_cublas)
+    # test_case(1, 2048, 64, 'int8', bmm_s8t_s8n_s32t)
+    # test_case(1, 2048, 64, 'int8', bmm_s8t_s8n_s32t_cublas)
+    # test_case(1, 2048, 1024, 'int8', bmm_s8t_s8n_s32t)
+    # test_case(1, 2048, 1024, 'int8', bmm_s8t_s8n_s32t_cublas)
+    # test_case(8, 512, 12288, 'int8', bmm_s8t_s8n_s32t)
+    # test_case(8, 512, 12288, 'int8', bmm_s8t_s8n_s32t_cublas)
+    # test_case(8, 2048, 64, 'int8', bmm_s8t_s8n_s32t)
+    # test_case(8, 2048, 64, 'int8', bmm_s8t_s8n_s32t_cublas)
+    # test_case(8, 2048, 1024, 'int8', bmm_s8t_s8n_s32t)
+    # test_case(8, 2048, 1024, 'int8', bmm_s8t_s8n_s32t_cublas)
+    # test_case(16, 512, 12288, 'int8', bmm_s8t_s8n_s32t)
+    # test_case(16, 512, 12288, 'int8', bmm_s8t_s8n_s32t_cublas)
     
 # 
