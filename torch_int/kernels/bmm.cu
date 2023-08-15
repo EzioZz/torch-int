@@ -11,6 +11,7 @@
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDABlas.h>
 #include <ATen/cuda/Exceptions.h>
+#include <iomanip>
 
 #define cudaCheckErrors(msg)                                   \
     do {                                                       \
@@ -252,7 +253,7 @@ __global__ void quant_f32_s4(float* a, uint8_t* dst, const size_t sizeA, float s
     uint8_t res1 = 0;
     uint8_t res2 = 0;
     res1 = ((reg_b.x & 0x8000) >> 24)|((reg_b.x & 0x0006)<<4) | ((reg_b.y & 0x8000) >> 28)|((reg_b.y & 0x0006)<<4);
-    res2 = ((reg_b.z & 0x8000) >> 24)|((reg_b.z & 0x0006)<<4) | ((reg_b.w & 0x8000) >> 28)|((reg_b.w & 0x0006)<<4) ;
+    res2 = ((reg_b.z & 0x8000) >> 24)|((reg_b.z & 0x0006)<<4) | ((reg_b.w & 0x8000) >> 28)|((reg_b.w & 0x0006)<<4);
     
     // convert 4 float to 4 int4, then store into 2 uint8
     idx = idx/2;
@@ -277,16 +278,18 @@ __global__ void quant_f32_s4(float* a, uint8_t* dst, const size_t sizeA, float s
 
 
 void benchTestQuantize(torch::Tensor A){
-  float scale = 100.0;
-  float offset = 20.0;
+  float scale = 1.0;
+  float offset = 0.0;
 
   int batch_size = A.size(0);
   int M = A.size(1);
   int K = A.size(2);
 
   size_t sizeA = batch_size * M * K;
-  uint8_t* qInt4_A;
-  cudaMalloc((uint8_t**)&qInt4_A, sizeA*sizeof(uint8_t) / 2);
+  uint8_t* qInt4_A = (uint8_t*)malloc(sizeA / 2 * sizeof(uint8_t));
+  uint8_t* d_qInt4_A;
+
+  cudaMalloc((uint8_t**)&d_qInt4_A, sizeA*sizeof(uint8_t) / 2);
 
   constexpr int blockSize = 256;
   int gridSize = sizeA / blockSize / 4; // 每个线程负责 4 个 float
@@ -295,20 +298,25 @@ void benchTestQuantize(torch::Tensor A){
   cudaEventCreate(&start);
   cudaEventCreate(&end);
   
-  for (int i = 0; i < 100; i++) {
-    quant_f32_s4<<<gridSize, blockSize>>>(A.data_ptr<float>(), qInt4_A, sizeA, scale, offset);
-  }
+  // quant_f32_s4<<<gridSize, blockSize>>>(A.data_ptr<float>(), d_qInt4_A, sizeA, scale, offset);
+
   cudaDeviceSynchronize();
   cudaCheckErrors("yych: ");
 
+  cudaMemcpy(qInt4_A, d_qInt4_A, sizeA*sizeof(uint8_t) / 2, cudaMemcpyDeviceToHost);
+
+  for (int i = 0; i < 10; i++) {
+    std::cout << std::setbase(16) << qInt4_A[i] << ", ";
+  }
 
   constexpr int n_iter = 1000;
   cudaEventRecord(start);
   for (int i = 0; i < n_iter; i++) {
-    quant_f32_s4<<<gridSize, blockSize>>>(A.data_ptr<float>(), qInt4_A, sizeA, scale, offset);
+    quant_f32_s4<<<gridSize, blockSize>>>(A.data_ptr<float>(), d_qInt4_A, sizeA, scale, offset);
   }
-  cudaDeviceSynchronize();
   cudaEventRecord(end);  
+  cudaDeviceSynchronize();
+
 
   float ms;
   cudaEventElapsedTime(&ms, start, end);
@@ -318,6 +326,8 @@ void benchTestQuantize(torch::Tensor A){
   long long workload = (long long)n_iter * (sizeA * 4 + sizeA/2 * 1); // byte
   double bandwidth = ((double)workload ) / ((double)ms/1e3) / (1e9);
   printf("int4 quantize Performance: %lfGBS\n", bandwidth);
+
+  cudaFree(d_qInt4_A);
 
 }
 
@@ -365,12 +375,14 @@ void bmm_s4t_s4n_f32t_test(uint8_t* qInt4_A, uint8_t* qInt4_B, float* C, int bat
   // Check the problem size is supported or not
   cutlass::Status status = gemm_op.can_implement(arguments);
   if (status != cutlass::Status::kSuccess) {
+    std::cout << "cutlass cannot implement" << std::endl;
     throw std::runtime_error("cutlass cannot implement");
   }
 
   // Initialize CUTLASS kernel with arguments and workspace pointer
   status = gemm_op.initialize(arguments, workspace.get());
   if (status != cutlass::Status::kSuccess) {
+    std::cout << "cutlass cannot initialize" << std::endl;
     throw std::runtime_error("cutlass cannot initialize");
   }
 
@@ -413,13 +425,17 @@ void benchTestBmmInt4(torch::Tensor A, torch::Tensor B, float alpha){
   quant_f32_s4<<<sizeB/256/4, 256>>>((float*)B.data_ptr(), qInt4_B, sizeB, scale, offset);
   cudaDeviceSynchronize();
   cudaCheckErrors("yych: ");
+
+  // for (int i = 0; i < sizeA/2; i++) {
+  //   std::cout << qInt4_A[i] << ", ";
+  // }
   
   cudaEvent_t start, end;
   cudaEventCreate(&start);
   cudaEventCreate(&end);
-  cutlass::int4b_t;
 
   bmm_s4t_s4n_f32t_test(qInt4_A, qInt4_B, C, batch_size, M, N, K, lda, ldb, ldc);
+  cudaCheckErrors("yych: ");
   cudaDeviceSynchronize();
   cudaCheckErrors("yych: ");
 
@@ -429,8 +445,8 @@ void benchTestBmmInt4(torch::Tensor A, torch::Tensor B, float alpha){
   for (int i = 0; i < n_iter; i++) {
     bmm_s4t_s4n_f32t_test(qInt4_A, qInt4_B, C, batch_size, M, N, K, lda, ldb, ldc);
   }
-  cudaDeviceSynchronize();
   cudaEventRecord(end);  
+  cudaDeviceSynchronize();
 
   cudaCheckErrors("yych: ");
 
@@ -438,14 +454,18 @@ void benchTestBmmInt4(torch::Tensor A, torch::Tensor B, float alpha){
   cudaEventElapsedTime(&ms, start, end);
   cudaEventDestroy(start);
   cudaEventDestroy(end);
+  std::cout << ms << std::endl;
 
-  long long computeLoad = (long long)n_iter * (batch_size * M * K * N);
-  double gops = (double)computeLoad / ((double)ms / 1e3) / (1e9); // G
+  long long computeLoad = (2ll * batch_size * M * K * N);
+  double gops = (double)n_iter * (double)computeLoad / (1.0*1e9) / ((double)ms / 1000.0); // G
   double tops = gops / 1e3;
   // long long workload = (long long)n_iter * (sizeA * 4 + sizeA/2 * 1); // byte
   // double bandwidth = ((double)workload ) / ((double)ms/1e3) / (1e9);
+  printf("bmm ms: %fms\n", ms);
   printf("bmm Performance: %lfGops\n", gops);
 
+  cudaFree(qInt4_A);
+  cudaFree(qInt4_B);
 }
 
 

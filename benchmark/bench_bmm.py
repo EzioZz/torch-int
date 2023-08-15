@@ -25,8 +25,10 @@ def bench_bmm(precision, batch_size, seq_len, hidden_dim, fn=bmm_s8t_s8n_s32t_cu
         args = (a, b)
         fn = torch.bmm
     elif precision == 'fp32':
-        a = torch.randn(batch_size, seq_len, hidden_dim).float().cuda()
-        b = torch.randn(batch_size, seq_len, hidden_dim).float().cuda().transpose(1, 2)
+        a = torch.randint(-8, 7, (batch_size, seq_len,
+                          hidden_dim), dtype=torch.int).float().cuda().contiguous()
+        b = torch.randint(-8, 7, (batch_size, seq_len,
+                          hidden_dim), dtype=torch.int).float().cuda().transpose(1, 2).contiguous()
         args = (a, b)
         
         bmm_s4t_s4n_f32t(a, b, 1.0)
@@ -61,7 +63,8 @@ if __name__ == '__main__':
     # bench_bmm(args.precision, args.batch_size, args.seq_len, args.hidden_dim)
     # bench_bmm(args.precision, args.batch_size, args.seq_len, args.hidden_dim, bmm_s8t_s8n_s32t)
     
-    test_case(32, 256, 64, 'fp32', bmm_s4t_s4n_f32t)
+    test_case(32, 1024, 1024, 'fp32', bmm_s4t_s4n_f32t)
+    # test_case(32, 256, 64, 'fp32', bmm_s4t_s4n_f32t)
     
     # test_case(32, 2048, 64, 'int8', bmm_s8t_s8n_s32t)
     # test_case(32, 2048, 64, 'int8', bmm_s8t_s8n_s32t_cublas)
