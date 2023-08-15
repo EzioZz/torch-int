@@ -262,7 +262,7 @@ __global__ void quant_f32_s4(float* a, uint8_t* dst, const size_t sizeA, float s
   return;
 }
 
-// __global__ void quant_s32_s4(int* a, uint8_t* dst, const size_t sizeA, float scale, float offset){
+// __global__ void convert_s4_f32(uint8_t* a, float* dst, const size_t sizeA, float scale, float offset){
 //   int idx = (threadIdx.x + blockIdx.x * blockDim.x)*4; // 每个线程负责 4 个元素
 //   float4 reg_a = (reinterpret_cast<int4*>(&a[idx]))[0];
 //   reg_a.x = (reg_a.x - offset) / scale + offset;
@@ -270,23 +270,7 @@ __global__ void quant_f32_s4(float* a, uint8_t* dst, const size_t sizeA, float s
 //   reg_a.z = (reg_a.z - offset) / scale + offset;
 //   reg_a.w = (reg_a.w - offset) / scale + offset;
 
-  
-  
-//   uint8_t* qInt4_A;
-//   cudaMalloc((uint8_t**)&qInt4_A, sizeA*sizeof(uint8_t) / 2);
 
-//   constexpr int blockSize = 256;
-//   int gridSize = sizeA / blockSize / 4; // 每个线程负责 4 个 float
-
-//   quant_f32_s4<<<gridSize, blockSize>>>(A.data_ptr<float>(), qInt4_A, sizeA, scale, offset);
-
-//   uint8_t* qInt4_A;
-//   cudaMalloc((uint8_t**)&qInt4_A, sizeA*sizeof(uint8_t) / 2);
-
-//   constexpr int blockSize = 256;
-//   int gridSize = sizeA / blockSize / 4; // 每个线程负责 4 个 float
-
-//   quant_f32_s4<<<gridSize, blockSize>>>(A.data_ptr<float>(), qInt4_A, sizeA, scale, offset);
 // }
 
 void printBits(uint8_t num) {
@@ -311,7 +295,7 @@ void benchTestQuantize(torch::Tensor A){
   uint8_t* d_qInt4_A;
   float* fp32_A = (float*)malloc(sizeA * sizeof(float));
 
-  cudaMalloc((uint8_t**)&d_qInt4_A, sizeA*sizeof(uint8_t) / 2);
+  cudaMalloc((uint8_t**)&d_qInt4_A, sizeA / 2*sizeof(uint8_t));
 
   constexpr int blockSize = 256;
   int gridSize = sizeA / blockSize / 4; // 每个线程负责 4 个 float
@@ -324,7 +308,7 @@ void benchTestQuantize(torch::Tensor A){
   cudaDeviceSynchronize();
   cudaCheckErrors("yych: ");
 
-  cudaMemcpy(qInt4_A, d_qInt4_A, sizeA*sizeof(uint8_t) / 2, cudaMemcpyDeviceToHost);
+  cudaMemcpy(qInt4_A, d_qInt4_A, sizeA / 2 * sizeof(uint8_t) , cudaMemcpyDeviceToHost);
   cudaMemcpy(fp32_A, A.data_ptr<float>(), sizeA*sizeof(float), cudaMemcpyDeviceToHost);
 
 
@@ -416,6 +400,8 @@ void bmm_s4t_s4n_f32t_test(uint8_t* qInt4_A, uint8_t* qInt4_B, float* C, int bat
   }
 
   status = gemm_op();
+  cudaCheckErrors("yych: ");
+
   if (status != cutlass::Status::kSuccess) {
     std::cout << "cutlass cannot run" << std::endl;
     throw std::runtime_error("cutlass cannot run");
@@ -431,8 +417,9 @@ torch::Tensor benchTestBmmInt4(torch::Tensor A, torch::Tensor B, float alpha){
 
   int batch_size = A.size(0);
   int M = A.size(1);
-  int K = A.size(2);
-  int N = B.size(2); // B K N
+  int N = B.size(1); // B N K
+  int K = A.size(2); //
+
   auto C = torch::empty({batch_size, M, N},
                         torch::dtype(torch::kFloat32).device(A.device()));
 
@@ -441,35 +428,38 @@ torch::Tensor benchTestBmmInt4(torch::Tensor A, torch::Tensor B, float alpha){
   size_t sizeC = batch_size * M * N;
 
   int lda = A.size(2);
-  int ldb = B.size(2);
+  int ldb = B.size(2); // B N K
   int ldc = C.size(2);
 
-  prnitf("(%d,%d,%d)\n",M,K,N);
-  prnitf("(%d,%d,%d)\n",lda,ldb,ldc);
+  printf("(M,K,N):(%d,%d,%d)\n",M,K,N);
+  printf("(%d,%d,%d)\n",lda,ldb,ldc);
 
   uint8_t* d_qInt4_A;
   uint8_t* d_qInt4_B;
-  // float* C;
-  cudaMalloc((uint8_t**)&d_qInt4_A, sizeA*sizeof(uint8_t) / 2);
-  cudaMalloc((uint8_t**)&d_qInt4_A, sizeB*sizeof(uint8_t) / 2);
+  cudaMalloc((uint8_t**)&d_qInt4_A, sizeA / 2 *sizeof(uint8_t));
+  cudaMalloc((uint8_t**)&d_qInt4_B, sizeB / 2 *sizeof(uint8_t));
   
-  uint8_t* h_qInt4_A = (uint8_t*)malloc(sizeA*sizeof(uint8_t) / 2);
-  uint8_t* h_qInt4_B = (uint8_t*)malloc(sizeB*sizeof(uint8_t) / 2);
+  cudaCheckErrors("yych: ");
+
+  uint8_t* h_qInt4_A = (uint8_t*)malloc(sizeA / 2 *sizeof(uint8_t));
+  uint8_t* h_qInt4_B = (uint8_t*)malloc(sizeB / 2 *sizeof(uint8_t));
   float* fp32_A = (float*)malloc(sizeA*sizeof(float));
   float* fp32_B = (float*)malloc(sizeB*sizeof(float));
+
   // do quant int4
-  // quant_f32_s4(float* a, uint8_t* dst, const size_t sizeA, float scale, float offset);
   quant_f32_s4<<<sizeA/256/4, 256>>>((float*)A.data_ptr(), d_qInt4_A, sizeA, scale, offset);
-  quant_f32_s4<<<sizeB/256/4, 256>>>((float*)B.data_ptr(), d_qInt4_A, sizeB, scale, offset);
+  quant_f32_s4<<<sizeB/256/4, 256>>>((float*)B.data_ptr(), d_qInt4_B, sizeB, scale, offset);
   cudaDeviceSynchronize();
   cudaCheckErrors("yych: ");
 
+  cudaMemcpy(h_qInt4_A, d_qInt4_A, sizeA / 2 *sizeof(uint8_t), cudaMemcpyDeviceToHost);
+  cudaMemcpy(h_qInt4_B, d_qInt4_B, sizeB / 2 *sizeof(uint8_t), cudaMemcpyDeviceToHost);
 
-  cudaMemcpy(d_qInt4_A, h_qInt4_A, sizeA*sizeof(uint8_t) / 2, cudaMemcpyDeviceToHost);
-  cudaMemcpy(d_qInt4_B, h_qInt4_B, sizeA*sizeof(uint8_t) / 2, cudaMemcpyDeviceToHost);
-
+  // ​cudaError_t cudaMemcpy ( void* dst, const void* src, size_t count, cudaMemcpyKind kind )
   cudaMemcpy(fp32_A, A.data_ptr(), sizeA * sizeof(float), cudaMemcpyDeviceToHost);
   cudaMemcpy(fp32_B, B.data_ptr(), sizeB * sizeof(float), cudaMemcpyDeviceToHost);
+  cudaDeviceSynchronize();
+  cudaCheckErrors("yych: ");
 
   for (int i = 0; i < 10; i++) {
     printBits(h_qInt4_B[i]);
@@ -487,6 +477,7 @@ torch::Tensor benchTestBmmInt4(torch::Tensor A, torch::Tensor B, float alpha){
 
   bmm_s4t_s4n_f32t_test(d_qInt4_A, d_qInt4_B, (float *)C.data_ptr(), batch_size, M, N, K, lda, ldb, ldc);
   cudaDeviceSynchronize();
+  cudaCheckErrors("yych: ");
 
   // TODO check correctness
   constexpr int n_iter = 1000;
